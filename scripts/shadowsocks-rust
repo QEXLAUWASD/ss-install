@@ -16,6 +16,7 @@ CONF=/etc/shadowsocks-rust/config.json
 PIDFILE=/var/run/ssserver.pid
 LOGFILE=/var/log/ssserver.log
 USER=nobody
+NOFILE_LIMIT=65535
 
 start() {
     echo -n "Starting $NAME: "
@@ -27,6 +28,7 @@ start() {
         echo "config not found: $CONF"
         exit 1
     fi
+    ulimit -n "$NOFILE_LIMIT" || echo "Warning: could not raise file descriptor limit"
     nohup "$DAEMON" -c "$CONF" -a "$USER" >>"$LOGFILE" 2>&1 &
     echo $! > "$PIDFILE"
     echo "done."

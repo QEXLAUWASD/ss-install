@@ -54,6 +54,10 @@ shadowsocks_rust_init="/etc/init.d/shadowsocks-rust"
 ssrust_latest_api="https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest"
 shadowsocks_rust_systemd_src="${gh_dl_url}${script_folder}/ssserver.service"
 shadowsocks_rust_sysv_src="${gh_dl_url}${script_folder}/shadowsocks-rust"
+shadowsocks_rust_template="/etc/systemd/system/ssserver@.service"
+shadowsocks_rust_template_src="${gh_dl_url}${script_folder}/ssserver@.service"
+shadowsocks_rust_sysctl="/etc/sysctl.d/90-shadowsocks-rust.conf"
+shadowsocks_rust_sysctl_src="${gh_dl_url}${script_folder}/90-shadowsocks-rust.conf"
 
 common_ciphers=(
     aes-256-gcm
@@ -324,6 +328,9 @@ install_dependencies() {
         for depend in ${yum_depends[@]}; do
             error_detect_depends "yum -y install ${depend}"
         done
+        if [ "${selected}" = "3" ]; then
+            error_detect_depends "yum -y install python3"
+        fi
     elif check_sys packageManager apt; then
         apt_depends=(
             autoconf automake build-essential cpio curl gcc gettext git gzip
@@ -573,6 +580,25 @@ install_prepare() {
         # rust server needs the same basic info as libev
         install_prepare_password
         install_prepare_port
+        read -p "Additional Rust ports (comma separated, optional): " rust_extra_ports
+        rust_ports=("${shadowsocksport}")
+        if [ -n "${rust_extra_ports}" ]; then
+            IFS=, read -ra requested_ports <<< "${rust_extra_ports}"
+            for rust_port in "${requested_ports[@]}"; do
+                rust_port="${rust_port//[[:space:]]/}"
+                if ! [[ "${rust_port}" =~ ^[1-9][0-9]{0,4}$ ]] || (( rust_port > 65535 )); then
+                    echo -e "[${red}Error${plain}] Invalid Rust port: ${rust_port}"
+                    exit 1
+                fi
+                for existing_port in "${rust_ports[@]}"; do
+                    if [ "${existing_port}" = "${rust_port}" ]; then
+                        echo -e "[${red}Error${plain}] Duplicate Rust port: ${rust_port}"
+                        exit 1
+                    fi
+                done
+                rust_ports+=("${rust_port}")
+            done
+        fi
         install_prepare_udp
         install_prepare_cipher
     fi
@@ -639,15 +665,22 @@ EOF
             mkdir -p "${shadowsocks_rust_dir}"
         fi
 
-        cat >${shadowsocks_rust_config} <<-EOF
-{
-    "server": ${server_value},
-    "server_port": ${shadowsocksport},
-    "password": "${shadowsockspwd}",
-    "method": "${shadowsockscipher}",
-    "mode": "${shadowsocksudp}"
-}
-EOF
+        # Python is installed as a dependency and safely escapes arbitrary passwords.
+        RUST_SERVER="${server_value//\"/}" RUST_PASSWORD="${shadowsockspwd}" \
+        RUST_METHOD="${shadowsockscipher}" RUST_MODE="${shadowsocksudp}" \
+        python3 - "${rust_ports[@]}" >"${shadowsocks_rust_config}" <<'PY'
+import json
+import os
+import sys
+
+servers = [{"server": os.environ["RUST_SERVER"], "server_port": int(port),
+            "password": os.environ["RUST_PASSWORD"], "method": os.environ["RUST_METHOD"],
+            "mode": os.environ["RUST_MODE"]} for port in sys.argv[1:]]
+json.dump({"servers": servers}, sys.stdout, indent=2)
+sys.stdout.write("\n")
+PY
+        chgrp "$(id -gn nobody)" "${shadowsocks_rust_config}"
+        chmod 640 "${shadowsocks_rust_config}"
     fi
 }
 
@@ -692,13 +725,17 @@ download_files() {
 }
 
 config_firewall() {
+    local ports=("${shadowsocksport}")
+    [ "${selected}" = "3" ] && ports=("${rust_ports[@]}")
+    local port
+    for port in "${ports[@]}"; do
     if centosversion 6; then
         /etc/init.d/iptables status >/dev/null 2>&1
         if [ $? -eq 0 ]; then
-            iptables -L -n | grep -i ${shadowsocksport} >/dev/null 2>&1
+            iptables -L -n | grep -w "${port}" >/dev/null 2>&1
             if [ $? -ne 0 ]; then
-                iptables -I INPUT -m state --state NEW -m tcp -p tcp --dport ${shadowsocksport} -j ACCEPT
-                iptables -I INPUT -m state --state NEW -m udp -p udp --dport ${shadowsocksport} -j ACCEPT
+                iptables -I INPUT -m state --state NEW -m tcp -p tcp --dport "${port}" -j ACCEPT
+                iptables -I INPUT -m state --state NEW -m udp -p udp --dport "${port}" -j ACCEPT
                 /etc/init.d/iptables save
                 /etc/init.d/iptables restart
             else
@@ -712,13 +749,14 @@ config_firewall() {
         systemctl status firewalld >/dev/null 2>&1
         if [ $? -eq 0 ]; then
             default_zone=$(firewall-cmd --get-default-zone)
-            firewall-cmd --permanent --zone=${default_zone} --add-port=${shadowsocksport}/tcp
-            firewall-cmd --permanent --zone=${default_zone} --add-port=${shadowsocksport}/udp
+            firewall-cmd --permanent --zone=${default_zone} --add-port="${port}"/tcp
+            firewall-cmd --permanent --zone=${default_zone} --add-port="${port}"/udp
             firewall-cmd --reload
         else
             echo -e "[${yellow}Warning${plain}] firewalld looks like not running or not installed, please enable port ${shadowsocksport} manually if necessary."
         fi
     fi
+    done
 }
 
 install_libsodium() {
@@ -877,6 +915,7 @@ install_shadowsocks_rust() {
     if command -v systemctl >/dev/null 2>&1; then
         mkdir -p "$(dirname ${shadowsocks_rust_systemd})"
         download "${shadowsocks_rust_systemd}" "${shadowsocks_rust_systemd_src}"
+        download "${shadowsocks_rust_template}" "${shadowsocks_rust_template_src}"
         systemctl daemon-reload
         systemctl enable ssserver >/dev/null 2>&1 || true
     else
@@ -889,6 +928,20 @@ install_shadowsocks_rust() {
         elif check_sys packageManager apt; then
             update-rc.d -f ${service_name} defaults
         fi
+    fi
+    if [ -d /etc/sysctl.d ]; then
+        download "${shadowsocks_rust_sysctl}" "${shadowsocks_rust_sysctl_src}"
+        if ! sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
+            modprobe tcp_bbr 2>/dev/null || true
+        fi
+        if sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
+            if ! grep -q '^net.ipv4.tcp_congestion_control = bbr$' "${shadowsocks_rust_sysctl}"; then
+                printf '%s\n' 'net.core.default_qdisc = fq' 'net.ipv4.tcp_congestion_control = bbr' >>"${shadowsocks_rust_sysctl}"
+            fi
+        else
+            echo -e "[${yellow}Warning${plain}] BBR is unavailable on this kernel; keeping the current congestion control."
+        fi
+        sysctl -p "${shadowsocks_rust_sysctl}" || echo -e "[${yellow}Warning${plain}] Could not apply all network settings."
     fi
 }
 
@@ -905,7 +958,7 @@ install_completed_rust() {
     echo
     echo -e "Congratulations, ${green}${software[2]}${plain} server install completed!"
     echo -e "Your Server IP        : ${red} $(get_ip) ${plain}"
-    echo -e "Your Server Port      : ${red} ${shadowsocksport} ${plain}"
+    echo -e "Your Server Port      : ${red} $(IFS=,; echo "${rust_ports[*]}") ${plain}"
     echo -e "Your Password         : ${red} ${shadowsockspwd} ${plain}"
     echo -e "Your Encryption Method: ${red} ${shadowsockscipher} ${plain}"
     echo -e "Your Config File      : ${red} ${shadowsocks_rust_config} ${plain}"
@@ -1318,6 +1371,7 @@ uninstall_shadowsocks_rust() {
             systemctl stop ssserver 2>/dev/null || true
             systemctl disable ssserver 2>/dev/null || true
             rm -f "${shadowsocks_rust_systemd}"
+            rm -f "${shadowsocks_rust_template}"
             systemctl daemon-reload 2>/dev/null || true
         else
             if [ -f "${shadowsocks_rust_init}" ]; then
@@ -1334,6 +1388,7 @@ uninstall_shadowsocks_rust() {
         rm -f /usr/local/bin/ssserver /usr/local/bin/ssurl 2>/dev/null || true
         rm -rf "${shadowsocks_rust_dir}" 2>/dev/null || true
         rm -f /var/log/ssserver.log 2>/dev/null || true
+        rm -f "${shadowsocks_rust_sysctl}"
         echo -e "[${green}Info${plain}] ${software[2]} uninstall success"
     else
         echo
