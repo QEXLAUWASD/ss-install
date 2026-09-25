@@ -1,5 +1,12 @@
 # Patch notes
 
+## Since 6af94a4 (`feat: add shadowsocks-rust multiport and network tuning`)
+
+- Rewrite the installation guide with the current download URL, interactive choices, Rust multiport setup, service management, BBR checks, and uninstall instructions.
+- Point the installer’s helper-file downloads to the same repository as the installation guide so the new Rust service and sysctl files are available.
+
+Validation: `bash -n shadowsocks.sh`, `git diff --check`, and an HTTP 200 check for the documented script URL passed. A live install was not run.
+
 ## Since e5d5423 (`fix: debian support for libpcre`)
 
 - Add comma separated Shadowsocks-Rust ports during installation. The installer writes a multi-server configuration and opens each port in the supported CentOS firewall path.

@@ -1,50 +1,64 @@
-# Auto Install Server Shell Script
+# Shadowsocks 伺服器安裝腳本
 
-- Intro: Auto Install Proxy Server
-- System Requirement: CentOS 6+，Debian 7+，Ubuntu 12+
+互動式安裝 Shadowsocks-libev、ShadowsocksR 或 Shadowsocks-Rust。腳本需要 root 權限、網路連線及 `wget`；Rust 版本另需可取得對應架構的官方預編譯檔。腳本會安裝套件並修改服務、防火牆及系統設定，請在目標主機上執行。
 
-## How to install server:
-``` bash
-wget --no-check-certificate https://raw.githubusercontent.com/RedTeaDev/ss-install/master/shadowsocks.sh
-chmod +x shadowsocks.sh
-./shadowsocks.sh 2>&1 | tee shadowsocks.log
-```
-**How to uninstall server**
-``` bash
-./shadowsocks.sh uninstall
-```
+## 安裝
 
-## Shadowsocks-Rust 多端口與效能設定
-
-安裝時選擇 `Shadowsocks-Rust`，輸入主要端口後可用逗號加入其他端口，例如 `8389,8390`。安裝器會在 `/etc/shadowsocks-rust/config.json` 的 `servers` 清單建立各端口，使用同一密碼和加密方法，並由一個 `ssserver` 程序同時服務。CentOS 的安裝流程會開放這些端口；其他系統及雲端防火牆請自行開放 TCP/UDP。每個客戶端仍須指定端口；若要跨端口分流，請在客戶端或外部負載平衡器設定。
-
-需要獨立程序時，systemd 模板 `ssserver@.service` 會讀取 `/etc/shadowsocks-rust/<名稱>.json`。例如先建立 `edge.json`（使用不同於主配置的端口），以 `chgrp "$(id -gn nobody)" /etc/shadowsocks-rust/edge.json && chmod 640 /etc/shadowsocks-rust/edge.json` 授予服務讀取權限，再執行 `systemctl enable --now ssserver@edge`。請勿讓兩個實例綁定相同端口。可用 `systemctl status ssserver@edge` 查看狀態；移除前以 `systemctl disable --now ssserver@edge` 停止額外實例。
-
-安裝器另寫入 `/etc/sysctl.d/90-shadowsocks-rust.conf` 並套用適度的連線佇列與本機端口範圍設定。若內核提供 BBR，會加上 `net.ipv4.tcp_congestion_control=bbr` 與 `net.core.default_qdisc=fq`；可用 `sysctl net.ipv4.tcp_congestion_control net.core.default_qdisc` 檢查。systemd 服務的 `LimitNOFILE` 為 1048576；SysV 啟動腳本嘗試設為 65535。實際上限仍受主機與容器限制影響。解除安裝會移除安裝器建立的 sysctl 檔案與 systemd 模板；已建立的額外服務須先自行停止，sysctl 執行中的值在重新開機前可能仍然保留。
-**How to upgrade server (only support shadowsocks-libev now)**
 ```bash
-./shadowsocks.sh upgrade
+wget -O shadowsocks.sh https://raw.githubusercontent.com/QEXLAUWASD/ss-install/master/shadowsocks.sh
+chmod +x shadowsocks.sh
+sudo ./shadowsocks.sh 2>&1 | tee shadowsocks.log
 ```
-****
 
-**How to start | stop | restart your server**
+在選單輸入 `1` 安裝 Shadowsocks-libev、`2` 安裝 ShadowsocksR、`3` 安裝 Shadowsocks-Rust。Rust 安裝流程會依序詢問密碼、主要端口、其他端口、UDP 支援及加密方法。其他端口可留空，或輸入 `8389,8390` 這樣的逗號分隔清單；它們與主要端口共用密碼、加密方法和同一個 `ssserver` 程序。
 
-Shadowsocks-libev：
-/etc/init.d/shadowsocks-libev start | stop | restart | status
+安裝後按輸出內容設定客戶端的伺服器位址、端口、密碼及加密方法。每個客戶端連線仍需指定端口；如需跨端口分流，請在客戶端或外部負載平衡器設定。CentOS 安裝流程會嘗試開放所選端口；Debian、Ubuntu 及雲端防火牆需要自行開放相應的 TCP 端口，啟用 UDP 時也要開放 UDP 端口。
 
-ShadowsocksR：
-/etc/init.d/shadowsocks-r start | stop | restart | status
+## Shadowsocks-Rust 服務與設定
 
-****
-**Configuration Files**
+主配置位於 `/etc/shadowsocks-rust/config.json`。使用 systemd 的主機可執行：
 
-Shadowsocks-libev ：
-/etc/shadowsocks-libev/config.json
+```bash
+sudo systemctl status ssserver
+sudo systemctl restart ssserver
+```
 
-ShadowsocksR ：
-/etc/shadowsocks-r/config.json
+使用 SysV init 的主機可執行 `sudo service shadowsocks-rust status` 或 `sudo service shadowsocks-rust restart`。Rust 安裝器會寫入 `/etc/sysctl.d/90-shadowsocks-rust.conf`；若內核支援 BBR，會啟用 BBR 與 `fq`。檢查目前生效的網路設定；第二個指令適用於 systemd 主機：
 
-****
+```bash
+sysctl net.ipv4.tcp_congestion_control net.core.default_qdisc
+systemctl show ssserver -p LimitNOFILE
+```
+
+主服務及下述 systemd 實例的 `LimitNOFILE` 設為 1048576；SysV 啟動腳本嘗試設為 65535。實際值仍受主機或容器上限限制。
+
+### 獨立實例（systemd）
+
+若要用不同程序服務另一組端口，先建立 `/etc/shadowsocks-rust/edge.json`。可從主配置複製，再修改 `server_port`，確保它不與主服務或其他實例重複。將配置授予服務帳戶讀取權限後啟動：
+
+```bash
+sudo chgrp "$(id -gn nobody)" /etc/shadowsocks-rust/edge.json
+sudo chmod 640 /etc/shadowsocks-rust/edge.json
+sudo systemctl enable --now ssserver@edge
+sudo systemctl status ssserver@edge
+```
+
+模板讀取 `/etc/shadowsocks-rust/<名稱>.json`。若複製的主配置含多個 `servers`，請逐一修改或刪除衝突端口。獨立實例的端口也需自行加入防火牆。停止實例可執行 `sudo systemctl disable --now ssserver@edge`。
+
+## 其他命令
+
+```bash
+sudo ./shadowsocks.sh uninstall  # 在選單中選擇已安裝的版本
+sudo ./shadowsocks.sh upgrade    # 目前僅支援 Shadowsocks-libev
+```
+
+Rust 解除安裝會移除安裝器建立的 sysctl 檔案和 systemd 模板。解除安裝前請先停止額外實例；執行中的 sysctl 值可能要到重新開機後才恢復。
+
+Shadowsocks-libev：`/etc/init.d/shadowsocks-libev start|stop|restart|status`，配置位於 `/etc/shadowsocks-libev/config.json`。
+
+ShadowsocksR：`/etc/init.d/shadowsocks-r start|stop|restart|status`，配置位於 `/etc/shadowsocks-r/config.json`。
+
+## 加密方法與協定參考
 
 **Ciphers（Shadowsocks-libev）:**
 aes-256-gcm
