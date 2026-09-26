@@ -1,5 +1,12 @@
 # Patch notes
 
+## Since b51ece4 (`docs: refresh installation guide and download source`)
+
+- Replace the Rust installer’s comma separated extra-port prompt with an additional-port count. Generate consecutive ports after the primary port and reject counts that would exceed 65535.
+- Update the installation guide with a concrete example: primary port 10223 plus four extra ports produces 10224 through 10227.
+
+Validation: `bash -n shadowsocks.sh`, `git diff --check`, and the example port calculation passed. A live install was not run.
+
 ## Since 6af94a4 (`feat: add shadowsocks-rust multiport and network tuning`)
 
 - Rewrite the installation guide with the current download URL, interactive choices, Rust multiport setup, service management, BBR checks, and uninstall instructions.

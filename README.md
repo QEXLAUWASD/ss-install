@@ -10,7 +10,7 @@ chmod +x shadowsocks.sh
 sudo ./shadowsocks.sh 2>&1 | tee shadowsocks.log
 ```
 
-在選單輸入 `1` 安裝 Shadowsocks-libev、`2` 安裝 ShadowsocksR、`3` 安裝 Shadowsocks-Rust。Rust 安裝流程會依序詢問密碼、主要端口、其他端口、UDP 支援及加密方法。其他端口可留空，或輸入 `8389,8390` 這樣的逗號分隔清單；它們與主要端口共用密碼、加密方法和同一個 `ssserver` 程序。
+在選單輸入 `1` 安裝 Shadowsocks-libev、`2` 安裝 ShadowsocksR、`3` 安裝 Shadowsocks-Rust。Rust 安裝流程會依序詢問密碼、主要端口、額外端口數量、UDP 支援及加密方法。額外端口數量留空時為 `0`；例如主要端口是 `10223`，輸入 `4` 會建立 `10224`、`10225`、`10226`、`10227`。若連續端口會超過 `65535`，安裝器會要求重新輸入。所有端口共用密碼、加密方法和同一個 `ssserver` 程序。
 
 安裝後按輸出內容設定客戶端的伺服器位址、端口、密碼及加密方法。每個客戶端連線仍需指定端口；如需跨端口分流，請在客戶端或外部負載平衡器設定。CentOS 安裝流程會嘗試開放所選端口；Debian、Ubuntu 及雲端防火牆需要自行開放相應的 TCP 端口，啟用 UDP 時也要開放 UDP 端口。
 

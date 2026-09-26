@@ -580,25 +580,19 @@ install_prepare() {
         # rust server needs the same basic info as libev
         install_prepare_password
         install_prepare_port
-        read -p "Additional Rust ports (comma separated, optional): " rust_extra_ports
         rust_ports=("${shadowsocksport}")
-        if [ -n "${rust_extra_ports}" ]; then
-            IFS=, read -ra requested_ports <<< "${rust_extra_ports}"
-            for rust_port in "${requested_ports[@]}"; do
-                rust_port="${rust_port//[[:space:]]/}"
-                if ! [[ "${rust_port}" =~ ^[1-9][0-9]{0,4}$ ]] || (( rust_port > 65535 )); then
-                    echo -e "[${red}Error${plain}] Invalid Rust port: ${rust_port}"
-                    exit 1
-                fi
-                for existing_port in "${rust_ports[@]}"; do
-                    if [ "${existing_port}" = "${rust_port}" ]; then
-                        echo -e "[${red}Error${plain}] Duplicate Rust port: ${rust_port}"
-                        exit 1
-                    fi
-                done
-                rust_ports+=("${rust_port}")
-            done
-        fi
+        while true; do
+            read -p "How many additional consecutive Rust ports? (Default: 0): " rust_extra_count
+            [ -z "${rust_extra_count}" ] && rust_extra_count=0
+            if [[ "${rust_extra_count}" =~ ^(0|[1-9][0-9]{0,4})$ ]] &&
+                (( rust_extra_count <= 65535 - shadowsocksport )); then
+                break
+            fi
+            echo -e "[${red}Error${plain}] Enter a count from 0 to $((65535 - shadowsocksport))."
+        done
+        for ((i = 1; i <= rust_extra_count; i++)); do
+            rust_ports+=("$((shadowsocksport + i))")
+        done
         install_prepare_udp
         install_prepare_cipher
     fi
